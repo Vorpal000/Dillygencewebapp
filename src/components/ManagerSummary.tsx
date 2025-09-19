@@ -23,24 +23,62 @@ export function ManagerSummary({ session }: ManagerSummaryProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchManagerSummary();
+    let timeoutId: NodeJS.Timeout;
+    
+    const fetchWithTimeout = async () => {
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('Request timeout')), 10000);
+      });
+
+      try {
+        await Promise.race([fetchManagerSummary(), timeoutPromise]);
+      } catch (error) {
+        console.error('Error fetching manager summary:', error);
+        setLoading(false);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    if (session?.access_token) {
+      fetchWithTimeout();
+    } else {
+      setLoading(false);
+    }
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, []);
 
   const fetchManagerSummary = async () => {
+    if (!session?.access_token) {
+      setLoading(false);
+      return;
+    }
+
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-473c0057/manager-summary`,
         {
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
           },
+          signal: controller.signal,
         }
       );
 
+      clearTimeout(timeoutId);
+
       if (response.ok) {
         const data = await response.json();
-        setSummary(data.summary);
-        setTotalUsers(data.totalUsers);
+        setSummary(Array.isArray(data.summary) ? data.summary : []);
+        setTotalUsers(typeof data.totalUsers === 'number' ? data.totalUsers : 0);
+      } else {
+        console.error('Erreur HTTP:', response.status);
       }
     } catch (error) {
       console.error('Erreur lors de la récupération du résumé manager:', error);
@@ -70,7 +108,7 @@ export function ManagerSummary({ session }: ManagerSummaryProps) {
     date: formatDate(day.date),
     'Bureau': day.office,
     'Télétravail': day.remote,
-    'Absences': day.absent
+    'Repos': day.absent
   }));
 
   // Calcul des moyennes pour la semaine
@@ -86,7 +124,7 @@ export function ManagerSummary({ session }: ManagerSummaryProps) {
   const pieData = [
     { name: 'Bureau', value: averages.office, color: '#10b981' },
     { name: 'Télétravail', value: averages.remote, color: '#3b82f6' },
-    { name: 'Absences', value: averages.absent, color: '#6b7280' }
+    { name: 'Repos', value: averages.absent, color: '#6b7280' }
   ];
 
   const occupancyRate = totalUsers > 0 ? ((averages.office / (workingDays.length * totalUsers)) * 100) : 0;
@@ -146,7 +184,7 @@ export function ManagerSummary({ session }: ManagerSummaryProps) {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Absences</CardTitle>
+            <CardTitle className="text-sm font-medium">Repos</CardTitle>
             <Ban className="h-4 w-4 text-gray-600" />
           </CardHeader>
           <CardContent>
@@ -178,7 +216,7 @@ export function ManagerSummary({ session }: ManagerSummaryProps) {
                 <Tooltip />
                 <Bar dataKey="Bureau" fill="#10b981" />
                 <Bar dataKey="Télétravail" fill="#3b82f6" />
-                <Bar dataKey="Absences" fill="#6b7280" />
+                <Bar dataKey="Repos" fill="#6b7280" />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -232,7 +270,7 @@ export function ManagerSummary({ session }: ManagerSummaryProps) {
                   <th className="text-left py-3 px-4 font-medium text-gray-700">Date</th>
                   <th className="text-center py-3 px-4 font-medium text-gray-700">Bureau</th>
                   <th className="text-center py-3 px-4 font-medium text-gray-700">Télétravail</th>
-                  <th className="text-center py-3 px-4 font-medium text-gray-700">Absences</th>
+                  <th className="text-center py-3 px-4 font-medium text-gray-700">Repos</th>
                   <th className="text-center py-3 px-4 font-medium text-gray-700">Total</th>
                 </tr>
               </thead>

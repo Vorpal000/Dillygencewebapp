@@ -26,23 +26,61 @@ export function Dashboard({ session }: DashboardProps) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchUserProfile();
+    let timeoutId: NodeJS.Timeout;
+    
+    const fetchWithTimeout = async () => {
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('Request timeout')), 10000);
+      });
+
+      try {
+        await Promise.race([fetchUserProfile(), timeoutPromise]);
+      } catch (error) {
+        console.error('Erreur lors de la récupération du profil:', error);
+        setLoading(false);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    if (session?.access_token) {
+      fetchWithTimeout();
+    } else {
+      setLoading(false);
+    }
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [session]);
 
   const fetchUserProfile = async () => {
+    if (!session?.access_token) {
+      setLoading(false);
+      return;
+    }
+
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-473c0057/profile`,
         {
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
           },
+          signal: controller.signal,
         }
       );
+
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         const userData = await response.json();
         setUser(userData);
+      } else {
+        console.error('Erreur HTTP:', response.status);
       }
     } catch (error) {
       console.error('Erreur lors de la récupération du profil:', error);
@@ -53,6 +91,9 @@ export function Dashboard({ session }: DashboardProps) {
 
   const promoteToManager = async () => {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-473c0057/promote-manager`,
         {
@@ -60,11 +101,16 @@ export function Dashboard({ session }: DashboardProps) {
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
           },
+          signal: controller.signal,
         }
       );
 
+      clearTimeout(timeoutId);
+
       if (response.ok) {
         await fetchUserProfile(); // Refresh user profile
+      } else {
+        console.error('Erreur HTTP:', response.status);
       }
     } catch (error) {
       console.error('Erreur lors de la promotion en manager:', error);
@@ -139,7 +185,7 @@ export function Dashboard({ session }: DashboardProps) {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <Tabs defaultValue="my-planning" className="w-full">
+        <Tabs defaultValue="global-planning" className="w-full">
           <TabsList className={`grid w-full mb-8 ${user?.role === 'manager' ? 'grid-cols-3' : 'grid-cols-2'}`}>
             <TabsTrigger value="my-planning" className="flex items-center">
               <Calendar className="h-4 w-4 mr-2" />

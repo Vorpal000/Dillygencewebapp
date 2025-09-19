@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Label } from './ui/label';
 import { Alert, AlertDescription } from './ui/alert';
-import { UserPlus, LogIn, Mail } from 'lucide-react';
+import { UserPlus, LogIn } from 'lucide-react';
 
 export function AuthForm() {
   const [email, setEmail] = useState('');
@@ -56,32 +56,17 @@ export function AuthForm() {
       const result = await response.json();
 
       if (!response.ok) {
+        // Vérifier si c'est une erreur d'email déjà utilisé
+        if (result.error && result.error.includes('User already registered')) {
+          throw new Error('Adresse mail déjà utilisée');
+        }
         throw new Error(result.error || 'Erreur lors de l\'inscription');
       }
 
-      setMessage('Compte créé avec succès ! Vous pouvez maintenant vous connecter.');
+      setMessage('Compte créé avec succès');
     } catch (error) {
       setError(error.message || 'Erreur lors de l\'inscription');
     } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGoogleSignIn = async () => {
-    setLoading(true);
-    setError('');
-
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: window.location.origin
-        }
-      });
-
-      if (error) throw error;
-    } catch (error) {
-      setError(error.message || 'Erreur lors de la connexion Google');
       setLoading(false);
     }
   };
@@ -172,28 +157,6 @@ export function AuthForm() {
               </Button>
             </TabsContent>
           </Tabs>
-
-          <div className="mt-4">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-background px-2 text-muted-foreground">
-                  Ou continuer avec
-                </span>
-              </div>
-            </div>
-            <Button
-              onClick={handleGoogleSignIn}
-              disabled={loading}
-              variant="outline"
-              className="w-full mt-4"
-            >
-              <Mail className="w-4 h-4 mr-2" />
-              Google
-            </Button>
-          </div>
 
           {error && (
             <Alert className="mt-4" variant="destructive">

@@ -120,12 +120,26 @@ app.get('/make-server-473c0057/my-planning', async (c) => {
       return c.json({ error: 'Utilisateur non authentifié' }, 401);
     }
 
+    // Récupérer les paramètres de date optionnels
+    const startDate = c.req.query('start');
+    const endDate = c.req.query('end');
+
     // Récupérer les plannings de l'utilisateur
     const plannings = await kv.getByPrefix(`planning:${user.id}:`);
     
-    return c.json(plannings.map(p => ({
+    let filteredPlannings = plannings;
+    
+    // Filtrer par dates si spécifiées
+    if (startDate && endDate) {
+      filteredPlannings = plannings.filter(p => 
+        p.date >= startDate && p.date <= endDate
+      );
+    }
+    
+    return c.json(filteredPlannings.map(p => ({
       id: p.id,
       date: p.date,
+      period: p.period || 'morning', // Rétrocompatibilité
       status: p.status
     })));
 
@@ -158,11 +172,13 @@ app.post('/make-server-473c0057/save-planning', async (c) => {
 
     // Sauvegarder chaque planning
     for (const planning of plannings) {
-      const planningId = `planning:${user.id}:${planning.date}`;
+      const period = planning.period || 'morning'; // Rétrocompatibilité
+      const planningId = `planning:${user.id}:${planning.date}:${period}`;
       await kv.set(planningId, {
         id: planningId,
         user_id: user.id,
         date: planning.date,
+        period: period,
         status: planning.status,
         updated_at: new Date().toISOString()
       });
@@ -191,19 +207,32 @@ app.get('/make-server-473c0057/global-planning', async (c) => {
       return c.json({ error: 'Utilisateur non authentifié' }, 401);
     }
 
+    // Récupérer les paramètres de date optionnels
+    const startDate = c.req.query('start');
+    const endDate = c.req.query('end');
+
     // Récupérer tous les plannings
     const allPlannings = await kv.getByPrefix('planning:');
     const allUsers = await kv.getByPrefix('user:');
+
+    // Filtrer par dates si spécifiées
+    let filteredPlannings = allPlannings;
+    if (startDate && endDate) {
+      filteredPlannings = allPlannings.filter(p => 
+        p.date >= startDate && p.date <= endDate
+      );
+    }
 
     // Créer un map des utilisateurs pour la recherche rapide
     const userMap = new Map();
     allUsers.forEach(u => userMap.set(u.id, u));
 
     // Enrichir les plannings avec les informations utilisateur
-    const enrichedPlannings = allPlannings.map(planning => ({
+    const enrichedPlannings = filteredPlannings.map(planning => ({
       id: planning.id,
       user_id: planning.user_id,
       date: planning.date,
+      period: planning.period || 'morning', // Rétrocompatibilité
       status: planning.status,
       user: userMap.get(planning.user_id) || { name: 'Utilisateur inconnu', email: '' }
     }));

@@ -4,7 +4,8 @@ import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Avatar, AvatarFallback } from './ui/avatar';
-import { Building2, Home, Ban, Filter, Users } from 'lucide-react';
+import { Building2, Home, Ban, Filter, Users, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Alert, AlertDescription } from './ui/alert';
 
 interface User {
   id: string;
@@ -16,6 +17,7 @@ interface Planning {
   id: string;
   user_id: string;
   date: string;
+  period: 'morning' | 'afternoon';
   status: 'office' | 'remote' | 'absent';
   user: User;
 }
@@ -30,6 +32,8 @@ export function GlobalPlanning({ session }: GlobalPlanningProps) {
   const [loading, setLoading] = useState(true);
   const [selectedUser, setSelectedUser] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [currentWeek, setCurrentWeek] = useState(new Date());
+  const [error, setError] = useState('');
 
   const statusConfig = {
     office: {
@@ -43,70 +47,140 @@ export function GlobalPlanning({ session }: GlobalPlanningProps) {
       color: 'bg-blue-100 text-blue-800 border-blue-200'
     },
     absent: {
-      label: 'Absence',
+      label: 'Repos',
       icon: Ban,
       color: 'bg-gray-100 text-gray-800 border-gray-200'
     }
   };
 
   useEffect(() => {
-    fetchGlobalPlanning();
-    fetchUsers();
-  }, []);
-
-  const getNext7Days = () => {
-    const days = [];
-    const today = new Date();
+    let timeoutId: NodeJS.Timeout;
     
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() + i);
-      days.push(date);
+    const fetchWithTimeout = async () => {
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('Request timeout')), 15000);
+      });
+
+      try {
+        setLoading(true);
+        await Promise.race([
+          Promise.all([fetchGlobalPlanning(), fetchUsers()]),
+          timeoutPromise
+        ]);
+      } catch (error) {
+        console.error('Error fetching data:', error);
+        setError('Erreur lors du chargement des données');
+      } finally {
+        setLoading(false);
+        clearTimeout(timeoutId);
+      }
+    };
+
+    fetchWithTimeout();
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [currentWeek]);
+
+  // Obtenir les 5 jours de la semaine actuelle (lundi à vendredi)
+  const getWeekDays = (date: Date) => {
+    const days = [];
+    const startOfWeek = new Date(date);
+    const day = startOfWeek.getDay();
+    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // Lundi = premier jour
+    startOfWeek.setDate(diff);
+    
+    for (let i = 0; i < 5; i++) {
+      const weekDay = new Date(startOfWeek);
+      weekDay.setDate(startOfWeek.getDate() + i);
+      days.push(weekDay);
     }
     
     return days;
   };
 
   const fetchGlobalPlanning = async () => {
+    if (!session?.access_token) {
+      setError('Session invalide');
+      return;
+    }
+
     try {
+      setError('');
+      const weekDays = getWeekDays(currentWeek);
+      const startDate = weekDays[0].toISOString().split('T')[0];
+      const endDate = weekDays[4].toISOString().split('T')[0];
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-473c0057/global-planning`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-473c0057/global-planning?start=${startDate}&end=${endDate}`,
         {
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
           },
+          signal: controller.signal,
         }
       );
 
+      clearTimeout(timeoutId);
+
       if (response.ok) {
         const data = await response.json();
-        setPlannings(data);
+        setPlannings(Array.isArray(data) ? data : []);
+      } else {
+        throw new Error(`HTTP ${response.status}`);
       }
     } catch (error) {
       console.error('Erreur lors de la récupération du planning global:', error);
-    } finally {
-      setLoading(false);
+      if (error.name !== 'AbortError') {
+        setError('Impossible de charger le planning global');
+      }
     }
   };
 
   const fetchUsers = async () => {
+    if (!session?.access_token) {
+      return;
+    }
+
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-473c0057/users`,
         {
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
           },
+          signal: controller.signal,
         }
       );
 
+      clearTimeout(timeoutId);
+
       if (response.ok) {
         const data = await response.json();
-        setUsers(data);
+        setUsers(Array.isArray(data) ? data : []);
+      } else {
+        throw new Error(`HTTP ${response.status}`);
       }
     } catch (error) {
       console.error('Erreur lors de la récupération des utilisateurs:', error);
+      if (error.name !== 'AbortError') {
+        setError('Impossible de charger les utilisateurs');
+      }
     }
+  };
+
+  const navigateWeek = (direction: 'prev' | 'next') => {
+    const newDate = new Date(currentWeek);
+    newDate.setDate(currentWeek.getDate() + (direction === 'next' ? 7 : -7));
+    setCurrentWeek(newDate);
+    setLoading(true);
   };
 
   const getInitials = (name: string) => {
@@ -126,13 +200,15 @@ export function GlobalPlanning({ session }: GlobalPlanningProps) {
     });
   };
 
-  const isWeekend = (date: Date) => {
-    const day = date.getDay();
-    return day === 0 || day === 6;
+  const formatWeekRange = (date: Date) => {
+    const weekDays = getWeekDays(date);
+    const start = weekDays[0].toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+    const end = weekDays[4].toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+    return `${start} - ${end}`;
   };
 
-  const getPlanningForUserAndDate = (userId: string, date: string) => {
-    return plannings.find(p => p.user_id === userId && p.date === date);
+  const getPlanningForUserDateAndPeriod = (userId: string, date: string, period: 'morning' | 'afternoon') => {
+    return plannings.find(p => p.user_id === userId && p.date === date && p.period === period);
   };
 
   const filteredUsers = users.filter(user => {
@@ -156,8 +232,35 @@ export function GlobalPlanning({ session }: GlobalPlanningProps) {
     );
   }
 
+  if (error) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <Alert className="bg-red-500 text-white p-4 rounded-lg">
+          <AlertDescription className="text-sm font-medium">
+            {error}
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
+      {/* Navigation de semaine */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-gray-50 rounded-lg">
+        <div className="flex items-center space-x-4">
+          <Button variant="outline" size="sm" onClick={() => navigateWeek('prev')}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <h3 className="font-medium text-lg">
+            Semaine du {formatWeekRange(currentWeek)}
+          </h3>
+          <Button variant="outline" size="sm" onClick={() => navigateWeek('next')}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
       {/* Filtres */}
       <div className="flex flex-col sm:flex-row gap-4 p-4 bg-gray-50 rounded-lg">
         <div className="flex items-center space-x-2">
@@ -191,7 +294,7 @@ export function GlobalPlanning({ session }: GlobalPlanningProps) {
                 <SelectItem value="all">Tous les statuts</SelectItem>
                 <SelectItem value="office">Présentiel</SelectItem>
                 <SelectItem value="remote">Télétravail</SelectItem>
-                <SelectItem value="absent">Absence</SelectItem>
+                <SelectItem value="absent">Repos</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -210,14 +313,18 @@ export function GlobalPlanning({ session }: GlobalPlanningProps) {
                     <span>Employé</span>
                   </div>
                 </th>
-                {getNext7Days().map((date) => (
+                {getWeekDays(currentWeek).map((date) => (
                   <th
                     key={date.toISOString()}
-                    className={`px-3 py-3 text-center text-sm font-medium min-w-[120px] ${
-                      isWeekend(date) ? 'text-gray-400 bg-gray-100' : 'text-gray-700'
-                    }`}
+                    className="px-3 py-3 text-center text-sm font-medium min-w-[150px] text-gray-700"
                   >
-                    {formatDate(date)}
+                    <div className="space-y-1">
+                      <div>{formatDate(date)}</div>
+                      <div className="flex justify-center space-x-2 text-xs text-gray-500">
+                        <span>Mat.</span>
+                        <span>A-M.</span>
+                      </div>
+                    </div>
                   </th>
                 ))}
               </tr>
@@ -242,35 +349,50 @@ export function GlobalPlanning({ session }: GlobalPlanningProps) {
                       </div>
                     </div>
                   </td>
-                  {getNext7Days().map((date) => {
+                  {getWeekDays(currentWeek).map((date) => {
                     const dateStr = date.toISOString().split('T')[0];
-                    const planning = getPlanningForUserAndDate(user.id, dateStr);
-                    const weekend = isWeekend(date);
+                    const morningPlanning = getPlanningForUserDateAndPeriod(user.id, dateStr, 'morning');
+                    const afternoonPlanning = getPlanningForUserDateAndPeriod(user.id, dateStr, 'afternoon');
 
                     return (
                       <td
                         key={dateStr}
-                        className={`px-3 py-4 text-center ${
-                          weekend ? 'bg-gray-50' : ''
-                        }`}
+                        className="px-2 py-4 text-center"
                       >
-                        {weekend ? (
-                          <Badge variant="secondary" className="bg-gray-100 text-gray-500">
-                            Repos
-                          </Badge>
-                        ) : planning ? (
-                           (() => {
-                             const StatusIcon = statusConfig[planning.status].icon;
-                             return (
-                               <Badge className={statusConfig[planning.status].color}>
-                                 <StatusIcon className="h-3 w-3 mr-1" />
-                                 {statusConfig[planning.status].label}
-                               </Badge>
-                             );
-                           })()
-                         ) : (
-                          <span className="text-gray-400 text-sm">Non défini</span>
-                        )}
+                        <div className="space-y-2">
+                          {/* Matinée */}
+                          <div className="min-h-[24px]">
+                            {morningPlanning ? (
+                              (() => {
+                                const StatusIcon = statusConfig[morningPlanning.status].icon;
+                                return (
+                                  <Badge className={`${statusConfig[morningPlanning.status].color} text-xs px-1 py-0.5`}>
+                                    <StatusIcon className="h-2 w-2 mr-1" />
+                                    M
+                                  </Badge>
+                                );
+                              })()
+                            ) : (
+                              <span className="text-gray-400 text-xs">-</span>
+                            )}
+                          </div>
+                          {/* Après-midi */}
+                          <div className="min-h-[24px]">
+                            {afternoonPlanning ? (
+                              (() => {
+                                const StatusIcon = statusConfig[afternoonPlanning.status].icon;
+                                return (
+                                  <Badge className={`${statusConfig[afternoonPlanning.status].color} text-xs px-1 py-0.5`}>
+                                    <StatusIcon className="h-2 w-2 mr-1" />
+                                    A
+                                  </Badge>
+                                );
+                              })()
+                            ) : (
+                              <span className="text-gray-400 text-xs">-</span>
+                            )}
+                          </div>
+                        </div>
                       </td>
                     );
                   })}
@@ -287,57 +409,23 @@ export function GlobalPlanning({ session }: GlobalPlanningProps) {
         </div>
       )}
 
-      {/* Statistiques rapides */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {getNext7Days().slice(0, 5).map((date) => {
-          if (isWeekend(date)) return null;
-          
-          const dateStr = date.toISOString().split('T')[0];
-          const dayPlannings = plannings.filter(p => p.date === dateStr);
-          
-          const stats = {
-            office: dayPlannings.filter(p => p.status === 'office').length,
-            remote: dayPlannings.filter(p => p.status === 'remote').length,
-            absent: dayPlannings.filter(p => p.status === 'absent').length,
-          };
-
-          return (
-            <div key={dateStr} className="bg-white p-4 rounded-lg border">
-              <h4 className="font-medium text-gray-900 mb-3">
-                {formatDate(date)}
-              </h4>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center space-x-2">
-                    <Building2 className="h-4 w-4 text-green-600" />
-                    <span className="text-sm">Bureau</span>
-                  </div>
-                  <Badge className="bg-green-100 text-green-800">
-                    {stats.office}
-                  </Badge>
-                </div>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center space-x-2">
-                    <Home className="h-4 w-4 text-blue-600" />
-                    <span className="text-sm">Télétravail</span>
-                  </div>
-                  <Badge className="bg-blue-100 text-blue-800">
-                    {stats.remote}
-                  </Badge>
-                </div>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center space-x-2">
-                    <Ban className="h-4 w-4 text-gray-600" />
-                    <span className="text-sm">Absences</span>
-                  </div>
-                  <Badge className="bg-gray-100 text-gray-800">
-                    {stats.absent}
-                  </Badge>
-                </div>
+      {/* Légende */}
+      <div className="bg-blue-50 p-4 rounded-lg">
+        <h4 className="font-medium text-blue-900 mb-3">Légende</h4>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {Object.entries(statusConfig).map(([status, config]) => {
+            const Icon = config.icon;
+            return (
+              <div key={status} className="flex items-center space-x-2">
+                <Icon className="h-4 w-4 text-gray-600" />
+                <span className="text-sm text-gray-700">{config.label}</span>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
+        <div className="mt-3 text-sm text-gray-600">
+          <p>M = Matinée | A = Après-midi</p>
+        </div>
       </div>
     </div>
   );

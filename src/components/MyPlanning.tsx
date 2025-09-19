@@ -3,11 +3,12 @@ import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Alert, AlertDescription } from './ui/alert';
-import { Building2, Home, Ban, Save, Calendar } from 'lucide-react';
+import { Building2, Home, Ban, Save, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface Planning {
   id?: string;
   date: string;
+  period: 'morning' | 'afternoon';
   status: 'office' | 'remote' | 'absent';
 }
 
@@ -20,6 +21,8 @@ export function MyPlanning({ session }: MyPlanningProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [currentWeek, setCurrentWeek] = useState(new Date());
+  const [error, setError] = useState('');
 
   const statusConfig = {
     office: {
@@ -35,7 +38,7 @@ export function MyPlanning({ session }: MyPlanningProps) {
       buttonColor: 'bg-blue-600 hover:bg-blue-700'
     },
     absent: {
-      label: 'Absence',
+      label: 'Repos',
       icon: Ban,
       color: 'bg-gray-100 text-gray-800 border-gray-200',
       buttonColor: 'bg-gray-600 hover:bg-gray-700'
@@ -43,39 +46,87 @@ export function MyPlanning({ session }: MyPlanningProps) {
   };
 
   useEffect(() => {
-    fetchMyPlanning();
-  }, []);
-
-  const getNext7Days = () => {
-    const days = [];
-    const today = new Date();
+    let timeoutId: NodeJS.Timeout;
     
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() + i);
-      days.push(date);
+    const fetchWithTimeout = async () => {
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('Request timeout')), 10000);
+      });
+
+      try {
+        await Promise.race([fetchMyPlanning(), timeoutPromise]);
+      } catch (error) {
+        console.error('Error fetching planning:', error);
+        setError('Erreur lors du chargement du planning');
+        setLoading(false);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    fetchWithTimeout();
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [currentWeek]);
+
+  // Obtenir les 5 jours de la semaine actuelle (lundi à vendredi)
+  const getWeekDays = (date: Date) => {
+    const days = [];
+    const startOfWeek = new Date(date);
+    const day = startOfWeek.getDay();
+    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // Lundi = premier jour
+    startOfWeek.setDate(diff);
+    
+    for (let i = 0; i < 5; i++) {
+      const weekDay = new Date(startOfWeek);
+      weekDay.setDate(startOfWeek.getDate() + i);
+      days.push(weekDay);
     }
     
     return days;
   };
 
   const fetchMyPlanning = async () => {
+    if (!session?.access_token) {
+      setError('Session invalide');
+      setLoading(false);
+      return;
+    }
+
     try {
+      setError('');
+      const weekDays = getWeekDays(currentWeek);
+      const startDate = weekDays[0].toISOString().split('T')[0];
+      const endDate = weekDays[4].toISOString().split('T')[0];
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-473c0057/my-planning`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-473c0057/my-planning?start=${startDate}&end=${endDate}`,
         {
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
           },
+          signal: controller.signal,
         }
       );
 
+      clearTimeout(timeoutId);
+
       if (response.ok) {
         const data = await response.json();
-        setPlannings(data);
+        setPlannings(Array.isArray(data) ? data : []);
+      } else {
+        throw new Error(`HTTP ${response.status}`);
       }
     } catch (error) {
       console.error('Erreur lors de la récupération du planning:', error);
+      if (error.name !== 'AbortError') {
+        setError('Impossible de charger le planning');
+      }
     } finally {
       setLoading(false);
     }
@@ -84,8 +135,12 @@ export function MyPlanning({ session }: MyPlanningProps) {
   const savePlanning = async () => {
     setSaving(true);
     setMessage('');
+    setError('');
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-473c0057/save-planning`,
         {
@@ -95,8 +150,11 @@ export function MyPlanning({ session }: MyPlanningProps) {
             'Authorization': `Bearer ${session.access_token}`,
           },
           body: JSON.stringify({ plannings }),
+          signal: controller.signal,
         }
       );
+
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         setMessage('Planning sauvegardé avec succès !');
@@ -106,25 +164,34 @@ export function MyPlanning({ session }: MyPlanningProps) {
       }
     } catch (error) {
       console.error('Erreur lors de la sauvegarde:', error);
-      setMessage('Erreur lors de la sauvegarde du planning');
+      if (error.name !== 'AbortError') {
+        setError('Erreur lors de la sauvegarde du planning');
+      }
     } finally {
       setSaving(false);
     }
   };
 
-  const updatePlanning = (date: string, status: 'office' | 'remote' | 'absent') => {
+  const navigateWeek = (direction: 'prev' | 'next') => {
+    const newDate = new Date(currentWeek);
+    newDate.setDate(currentWeek.getDate() + (direction === 'next' ? 7 : -7));
+    setCurrentWeek(newDate);
+    setLoading(true);
+  };
+
+  const updatePlanning = (date: string, period: 'morning' | 'afternoon', status: 'office' | 'remote' | 'absent') => {
     setPlannings(prev => {
-      const existing = prev.find(p => p.date === date);
+      const existing = prev.find(p => p.date === date && p.period === period);
       if (existing) {
-        return prev.map(p => p.date === date ? { ...p, status } : p);
+        return prev.map(p => (p.date === date && p.period === period) ? { ...p, status } : p);
       } else {
-        return [...prev, { date, status }];
+        return [...prev, { date, period, status }];
       }
     });
   };
 
-  const getPlanningForDate = (date: string) => {
-    return plannings.find(p => p.date === date);
+  const getPlanningForDateAndPeriod = (date: string, period: 'morning' | 'afternoon') => {
+    return plannings.find(p => p.date === date && p.period === period);
   };
 
   const formatDate = (date: Date) => {
@@ -135,9 +202,11 @@ export function MyPlanning({ session }: MyPlanningProps) {
     });
   };
 
-  const isWeekend = (date: Date) => {
-    const day = date.getDay();
-    return day === 0 || day === 6; // Dimanche ou Samedi
+  const formatWeekRange = (date: Date) => {
+    const weekDays = getWeekDays(date);
+    const start = weekDays[0].toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+    const end = weekDays[4].toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+    return `${start} - ${end}`;
   };
 
   if (loading) {
@@ -150,10 +219,21 @@ export function MyPlanning({ session }: MyPlanningProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <Calendar className="h-5 w-5 text-blue-600" />
-          <h3 className="text-lg font-medium">Planning des 7 prochains jours</h3>
+      {/* Navigation de semaine et bouton sauvegarder */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex items-center space-x-4">
+          <Button variant="outline" size="sm" onClick={() => navigateWeek('prev')}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <div className="flex items-center space-x-2">
+            <Calendar className="h-5 w-5 text-blue-600" />
+            <h3 className="text-lg font-medium">
+              Semaine du {formatWeekRange(currentWeek)}
+            </h3>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => navigateWeek('next')}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
         </div>
         <Button onClick={savePlanning} disabled={saving}>
           <Save className="h-4 w-4 mr-2" />
@@ -167,71 +247,104 @@ export function MyPlanning({ session }: MyPlanningProps) {
         </Alert>
       )}
 
+      {error && (
+        <Alert>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
       <div className="grid gap-4">
-        {getNext7Days().map((date) => {
+        {getWeekDays(currentWeek).map((date) => {
           const dateStr = date.toISOString().split('T')[0];
-          const planning = getPlanningForDate(dateStr);
-          const weekend = isWeekend(date);
+          const morningPlanning = getPlanningForDateAndPeriod(dateStr, 'morning');
+          const afternoonPlanning = getPlanningForDateAndPeriod(dateStr, 'afternoon');
 
           return (
             <div
               key={dateStr}
-              className={`p-4 border rounded-lg ${
-                weekend ? 'bg-gray-50 border-gray-200' : 'bg-white border-gray-200'
-              }`}
+              className="p-4 border rounded-lg bg-white border-gray-200"
             >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-medium text-gray-900">
-                    {formatDate(date)}
-                  </h4>
-                  {weekend && (
-                    <p className="text-sm text-gray-500">Week-end</p>
-                  )}
+              <div className="mb-4">
+                <h4 className="font-medium text-gray-900 mb-2">
+                  {formatDate(date)}
+                </h4>
+              </div>
+
+              {/* Matinée */}
+              <div className="mb-6">
+                <h5 className="text-sm font-medium text-gray-700 mb-3">Matinée</h5>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(statusConfig).map(([status, config]) => {
+                    const Icon = config.icon;
+                    const isSelected = morningPlanning?.status === status;
+
+                    return (
+                      <Button
+                        key={`morning-${status}`}
+                        onClick={() => updatePlanning(dateStr, 'morning', status as any)}
+                        variant={isSelected ? "default" : "outline"}
+                        size="sm"
+                        className={isSelected ? `text-white ${config.buttonColor}` : ''}
+                      >
+                        <Icon className="h-4 w-4 mr-2" />
+                        {config.label}
+                      </Button>
+                    );
+                  })}
                 </div>
-
-                {!weekend && (
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    {Object.entries(statusConfig).map(([status, config]) => {
-                      const Icon = config.icon;
-                      const isSelected = planning?.status === status;
-
+                
+                {morningPlanning && (
+                  <div className="mt-2">
+                    {(() => {
+                      const StatusIcon = statusConfig[morningPlanning.status].icon;
                       return (
-                        <Button
-                          key={status}
-                          onClick={() => updatePlanning(dateStr, status as any)}
-                          variant={isSelected ? "default" : "outline"}
-                          size="sm"
-                          className={isSelected ? `text-white ${config.buttonColor}` : ''}
-                        >
-                          <Icon className="h-4 w-4 mr-2" />
-                          {config.label}
-                        </Button>
+                        <Badge className={statusConfig[morningPlanning.status].color}>
+                          <StatusIcon className="h-3 w-3 mr-1" />
+                          {statusConfig[morningPlanning.status].label}
+                        </Badge>
                       );
-                    })}
+                    })()}
                   </div>
-                )}
-
-                {weekend && (
-                  <Badge variant="secondary" className="bg-gray-100 text-gray-600">
-                    Repos
-                  </Badge>
                 )}
               </div>
 
-              {planning && !weekend && (
-                <div className="mt-3">
-                  {(() => {
-                    const StatusIcon = statusConfig[planning.status].icon;
+              {/* Après-midi */}
+              <div>
+                <h5 className="text-sm font-medium text-gray-700 mb-3">Après-midi</h5>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(statusConfig).map(([status, config]) => {
+                    const Icon = config.icon;
+                    const isSelected = afternoonPlanning?.status === status;
+
                     return (
-                      <Badge className={statusConfig[planning.status].color}>
-                        <StatusIcon className="h-3 w-3 mr-1" />
-                        {statusConfig[planning.status].label}
-                      </Badge>
+                      <Button
+                        key={`afternoon-${status}`}
+                        onClick={() => updatePlanning(dateStr, 'afternoon', status as any)}
+                        variant={isSelected ? "default" : "outline"}
+                        size="sm"
+                        className={isSelected ? `text-white ${config.buttonColor}` : ''}
+                      >
+                        <Icon className="h-4 w-4 mr-2" />
+                        {config.label}
+                      </Button>
                     );
-                  })()}
+                  })}
                 </div>
-              )}
+                
+                {afternoonPlanning && (
+                  <div className="mt-2">
+                    {(() => {
+                      const StatusIcon = statusConfig[afternoonPlanning.status].icon;
+                      return (
+                        <Badge className={statusConfig[afternoonPlanning.status].color}>
+                          <StatusIcon className="h-3 w-3 mr-1" />
+                          {statusConfig[afternoonPlanning.status].label}
+                        </Badge>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
             </div>
           );
         })}
