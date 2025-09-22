@@ -38,7 +38,7 @@ export function MyPlanning({ session }: MyPlanningProps) {
       buttonColor: 'bg-blue-600 hover:bg-blue-700'
     },
     absent: {
-      label: 'Repos',
+      label: 'Absent',
       icon: Ban,
       color: 'bg-gray-100 text-gray-800 border-gray-200',
       buttonColor: 'bg-gray-600 hover:bg-gray-700'

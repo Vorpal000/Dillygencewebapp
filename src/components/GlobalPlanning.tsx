@@ -47,7 +47,7 @@ export function GlobalPlanning({ session }: GlobalPlanningProps) {
       color: 'bg-blue-100 text-blue-800 border-blue-200'
     },
     absent: {
-      label: 'Repos',
+      label: 'Absent',
       icon: Ban,
       color: 'bg-gray-100 text-gray-800 border-gray-200'
     }
@@ -294,7 +294,7 @@ export function GlobalPlanning({ session }: GlobalPlanningProps) {
                 <SelectItem value="all">Tous les statuts</SelectItem>
                 <SelectItem value="office">Présentiel</SelectItem>
                 <SelectItem value="remote">Télétravail</SelectItem>
-                <SelectItem value="absent">Repos</SelectItem>
+                <SelectItem value="absent">Absent</SelectItem>
               </SelectContent>
             </Select>
           </div>

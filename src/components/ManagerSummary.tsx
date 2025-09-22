@@ -108,7 +108,7 @@ export function ManagerSummary({ session }: ManagerSummaryProps) {
     date: formatDate(day.date),
     'Bureau': day.office,
     'Télétravail': day.remote,
-    'Repos': day.absent
+    'Absent': day.absent
   }));
 
   // Calcul des moyennes pour la semaine
@@ -124,7 +124,7 @@ export function ManagerSummary({ session }: ManagerSummaryProps) {
   const pieData = [
     { name: 'Bureau', value: averages.office, color: '#10b981' },
     { name: 'Télétravail', value: averages.remote, color: '#3b82f6' },
-    { name: 'Repos', value: averages.absent, color: '#6b7280' }
+    { name: 'Absent', value: averages.absent, color: '#6b7280' }
   ];
 
   const occupancyRate = totalUsers > 0 ? ((averages.office / (workingDays.length * totalUsers)) * 100) : 0;
@@ -184,7 +184,7 @@ export function ManagerSummary({ session }: ManagerSummaryProps) {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Repos</CardTitle>
+            <CardTitle className="text-sm font-medium">Absent</CardTitle>
             <Ban className="h-4 w-4 text-gray-600" />
           </CardHeader>
           <CardContent>
@@ -216,7 +216,7 @@ export function ManagerSummary({ session }: ManagerSummaryProps) {
                 <Tooltip />
                 <Bar dataKey="Bureau" fill="#10b981" />
                 <Bar dataKey="Télétravail" fill="#3b82f6" />
-                <Bar dataKey="Repos" fill="#6b7280" />
+                <Bar dataKey="Absent" fill="#6b7280" />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -270,7 +270,7 @@ export function ManagerSummary({ session }: ManagerSummaryProps) {
                   <th className="text-left py-3 px-4 font-medium text-gray-700">Date</th>
                   <th className="text-center py-3 px-4 font-medium text-gray-700">Bureau</th>
                   <th className="text-center py-3 px-4 font-medium text-gray-700">Télétravail</th>
-                  <th className="text-center py-3 px-4 font-medium text-gray-700">Repos</th>
+                  <th className="text-center py-3 px-4 font-medium text-gray-700">Absent</th>
                   <th className="text-center py-3 px-4 font-medium text-gray-700">Total</th>
                 </tr>
               </thead>
